@@ -44,24 +44,33 @@ def get_embeddings(texts):
     return [item["embedding"] for item in result["data"]]
 
 
-def read_source(path):
+def read_text_source(path):
     # TXT ve Markdown dosyalarını doğrudan oku.
-    if path.suffix.lower() in {".txt", ".md"}:
-        return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8")
 
-    # PDF içindeki metni sayfa sayfa çıkar.
-    if path.suffix.lower() == ".pdf":
-        reader = PdfReader(str(path))
-        pages = []
 
-        for page in reader.pages:
-            text = page.extract_text() or ""
-            if text.strip():
-                pages.append(text)
+def read_pdf_pages(path):
+    # PDF'yi tek metin yapmak yerine sayfa sayfa oku.
+    # Böylece her chunk'ın hangi PDF sayfasından geldiğini kaybetmeyiz.
+    reader = PdfReader(str(path))
+    pages = []
 
-        return "\n\n".join(pages)
+    for page_number, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        text = text.strip()
 
-    return ""
+        if not text:
+            print(f"UYARI: {path} sayfa {page_number}: metin çıkarılamadı.")
+            continue
+
+        pages.append(
+            {
+                "text": text,
+                "page": page_number,
+            }
+        )
+
+    return pages
 
 
 def load_documents():
@@ -76,20 +85,45 @@ def load_documents():
     documents = []
 
     for path in files:
-        text = read_source(path)
-        chunks = create_chunks(text)
+        suffix = path.suffix.lower()
 
-        for chunk_index, chunk in enumerate(chunks):
-            if len(chunk.strip()) < 20:
-                continue
+        if suffix == ".pdf":
+            # PDF'de her sayfayı ayrı chunk'la ki metadata'ya doğru sayfa yazılsın.
+            pages = read_pdf_pages(path)
 
-            documents.append(
-                {
-                    "text": chunk,
-                    "source": str(path),
-                    "chunk_index": chunk_index,
-                }
-            )
+            for page_data in pages:
+                chunks = create_chunks(page_data["text"])
+
+                for chunk_index, chunk in enumerate(chunks):
+                    if len(chunk.strip()) < 20:
+                        continue
+
+                    documents.append(
+                        {
+                            "text": chunk,
+                            "source": str(path),
+                            "page": page_data["page"],
+                            "chunk_index": chunk_index,
+                        }
+                    )
+
+        else:
+            # TXT/Markdown dosyalarında sayfa olmadığı için page=0 kullanıyoruz.
+            text = read_text_source(path)
+            chunks = create_chunks(text)
+
+            for chunk_index, chunk in enumerate(chunks):
+                if len(chunk.strip()) < 20:
+                    continue
+
+                documents.append(
+                    {
+                        "text": chunk,
+                        "source": str(path),
+                        "page": 0,
+                        "chunk_index": chunk_index,
+                    }
+                )
 
     return files, documents
 
@@ -133,6 +167,7 @@ def main():
         metadatas = [
             {
                 "source": item["source"],
+                "page": item["page"],
                 "chunk_index": item["chunk_index"],
             }
             for item in batch
