@@ -1,15 +1,37 @@
-def create_chunks(text, chunk_size=200, overlap=40):
+def create_chunks(text, chunk_size=500):
+    # Metni boş satırlardan böl.
+    # Böylece her paragraf ayrı bir parça haline gelir.
+    paragraphs = text.split("\n\n")
+
     chunks = []
+    current_chunk = ""
 
-    start = 0
+    for paragraph in paragraphs:
+        # Baştaki ve sondaki gereksiz boşlukları temizle
+        paragraph = paragraph.strip()
 
-    while start < len(text):
-        end = start + chunk_size
+        # Boş paragraf varsa atla
+        if not paragraph:
+            continue
 
-        chunk = text[start:end]
+        # Paragraf mevcut chunk'a eklenince
+        # chunk_size sınırını geçmiyorsa birlikte tut
+        if len(current_chunk) + len(paragraph) <= chunk_size:
+            if current_chunk:
+                current_chunk += "\n\n"
 
-        chunks.append(chunk)
+            current_chunk += paragraph
 
-        start += chunk_size - overlap
+        else:
+            # Mevcut chunk dolduysa önce onu kaydet
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            # Yeni chunk'ı bu paragrafla başlat
+            current_chunk = paragraph
+
+    # Döngü bittikten sonra elimizde kalan son chunk'ı da kaydet
+    if current_chunk:
+        chunks.append(current_chunk)
 
     return chunks

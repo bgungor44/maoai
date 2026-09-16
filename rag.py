@@ -76,16 +76,15 @@ for i, (chunk, distance) in enumerate(
 context = "\n\n".join(chunks)
 
 
-# Bulunan kaynakları Cerebras üzerindeki LLM'e gönder
-# NVIDIA şimdilik sadece embedding üretmek için kullanılıyor
+# Bulunan kaynakları LLM'e gönder
 client = OpenAI(
-    base_url="https://api.cerebras.ai/v1",
-    api_key=os.environ["CEREBRAS_API_KEY"],
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=os.environ["NVIDIA_API_KEY"],
 )
 
 
 response = client.chat.completions.create(
-    model="llama3.1-8b",
+    model="nvidia/nemotron-3.5-lightning-30b-a3b",
     messages=[
         {
             "role": "system",
