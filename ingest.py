@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import chromadb
@@ -49,14 +50,50 @@ def read_text_source(path):
     return path.read_text(encoding="utf-8")
 
 
+def decode_legacy_pdf_glyphs(text):
+    # Bazı eski Türkçe PDF'lerde pypdf gerçek harfler yerine
+    # /G61/G6F/G... biçiminde font glyph kodları döndürüyor.
+    # Bu PDF'de kodların büyük kısmı Windows-1254 byte değerlerine karşılık geliyor:
+    # /G61 -> a, /GFD -> ı, /GFE -> ş, /GF0 -> ğ, /GFC -> ü, /GF6 -> ö, /GE7 -> ç.
+    # Chunk oluşturmadan ÖNCE bunları gerçek Türkçe karakterlere çeviriyoruz.
+    if not re.search(r"/G[0-9A-Fa-f]{2}", text):
+        return text
+
+    def replace_glyph(match):
+        value = int(match.group(1), 16)
+
+        try:
+            return bytes([value]).decode("cp1254")
+        except UnicodeDecodeError:
+            # Tanımsız bir byte gelirse veri kaybetmek yerine orijinal kodu bırak.
+            return match.group(0)
+
+    decoded = re.sub(r"/G([0-9A-Fa-f]{2})", replace_glyph, text)
+
+    # Bazı fontlarda noktalama işaretleri özel glyph kodlarıyla geliyor.
+    # Geriye kalan yaygın kodları okunabilir Unicode işaretlerine dönüştür.
+    decoded = decoded.replace("/G92", "’")
+    decoded = decoded.replace("/G93", "“")
+    decoded = decoded.replace("/G94", "”")
+
+    return decoded
+
+
 def read_pdf_pages(path):
     # PDF'yi tek metin yapmak yerine sayfa sayfa oku.
     # Böylece her chunk'ın hangi PDF sayfasından geldiğini kaybetmeyiz.
     reader = PdfReader(str(path))
     pages = []
+    repaired_pages = 0
 
     for page_number, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
+
+        # Font encoding'i bozuk eski PDF'leri mümkünse otomatik düzelt.
+        if re.search(r"/G[0-9A-Fa-f]{2}", text):
+            text = decode_legacy_pdf_glyphs(text)
+            repaired_pages += 1
+
         text = text.strip()
 
         if not text:
@@ -68,6 +105,12 @@ def read_pdf_pages(path):
                 "text": text,
                 "page": page_number,
             }
+        )
+
+    if repaired_pages:
+        print(
+            f"PDF font düzeltme: {path} içinde "
+            f"{repaired_pages} sayfa glyph kodlarından çözüldü."
         )
 
     return pages
