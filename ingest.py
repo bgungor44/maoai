@@ -3,10 +3,14 @@ from pathlib import Path
 
 import chromadb
 import requests
+from dotenv import load_dotenv
 from pypdf import PdfReader
 
 from chunking import create_chunks
 
+
+# Proje kökündeki .env dosyasındaki API anahtarlarını ortam değişkenlerine yükle.
+load_dotenv()
 
 EMBEDDING_URL = "https://integrate.api.nvidia.com/v1/embeddings"
 KNOWLEDGE_DIR = Path("knowledge")
