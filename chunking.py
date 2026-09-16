@@ -1,6 +1,27 @@
-def create_chunks(text, chunk_size=500):
+def _split_long_text(text, chunk_size, overlap):
+    # Tek bir paragraf chunk_size'dan uzunsa onu da parçalara ayır.
+    # overlap sayesinde iki parça arasında biraz ortak metin kalır.
+    pieces = []
+    start = 0
+
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        piece = text[start:end].strip()
+
+        if piece:
+            pieces.append(piece)
+
+        if end == len(text):
+            break
+
+        start = max(end - overlap, start + 1)
+
+    return pieces
+
+
+def create_chunks(text, chunk_size=1000, overlap=150):
     # Metni boş satırlardan böl.
-    # Böylece her paragraf ayrı bir parça haline gelir.
+    # Böylece mümkün olduğunca paragraf bütünlüğünü koruruz.
     paragraphs = text.split("\n\n")
 
     chunks = []
@@ -14,9 +35,22 @@ def create_chunks(text, chunk_size=500):
         if not paragraph:
             continue
 
-        # Paragraf mevcut chunk'a eklenince
-        # chunk_size sınırını geçmiyorsa birlikte tut
-        if len(current_chunk) + len(paragraph) <= chunk_size:
+        # Çok uzun tek bir paragraf varsa önce mevcut chunk'ı kaydet
+        # sonra uzun paragrafı kendi içinde böl.
+        if len(paragraph) > chunk_size:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
+            chunks.extend(
+                _split_long_text(paragraph, chunk_size, overlap)
+            )
+            continue
+
+        separator_size = 2 if current_chunk else 0
+
+        # Paragraf mevcut chunk'a eklenince sınırı geçmiyorsa birlikte tut
+        if len(current_chunk) + separator_size + len(paragraph) <= chunk_size:
             if current_chunk:
                 current_chunk += "\n\n"
 
@@ -27,7 +61,6 @@ def create_chunks(text, chunk_size=500):
             if current_chunk:
                 chunks.append(current_chunk)
 
-            # Yeni chunk'ı bu paragrafla başlat
             current_chunk = paragraph
 
     # Döngü bittikten sonra elimizde kalan son chunk'ı da kaydet
