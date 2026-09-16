@@ -72,14 +72,25 @@ def retrieve(collection, question):
     return list(zip(documents, distances, metadatas))
 
 
+def source_label(metadata):
+    # PDF ise dosya adına ek olarak sayfa numarasını da göster.
+    source = metadata.get("source", "bilinmeyen kaynak")
+    page = metadata.get("page", 0)
+
+    if page:
+        return f"{source}, sayfa {page}"
+
+    return source
+
+
 def build_context(matches):
-    # LLM her chunk'ın hangi dosyadan geldiğini de görsün.
+    # LLM her chunk'ın hangi dosyadan ve PDF ise hangi sayfadan geldiğini görsün.
     parts = []
 
     for index, (chunk, distance, metadata) in enumerate(matches, start=1):
-        source = metadata.get("source", "bilinmeyen kaynak")
+        label = source_label(metadata)
         parts.append(
-            f"[KAYNAK {index} | dosya: {source}]\n{chunk}"
+            f"[KAYNAK {index} | {label}]\n{chunk}"
         )
 
     return "\n\n".join(parts)
@@ -90,6 +101,11 @@ def print_matches(matches):
     for index, (chunk, distance, metadata) in enumerate(matches, start=1):
         print(f"\n--- KAYNAK {index} ---")
         print(f"Dosya: {metadata.get('source', 'bilinmeyen kaynak')}")
+
+        page = metadata.get("page", 0)
+        if page:
+            print(f"Sayfa: {page}")
+
         print(f"Distance: {distance:.4f}")
         print(chunk)
 
