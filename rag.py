@@ -1,9 +1,8 @@
 import os
-import math
 import requests
+import chromadb
 
 from openai import OpenAI
-from chunking import create_chunks
 
 
 EMBEDDING_URL = "https://integrate.api.nvidia.com/v1/embeddings"
@@ -14,17 +13,17 @@ HEADERS = {
 }
 
 
-def get_embedding(text, input_type):
+def get_query_embedding(text):
     data = {
         "model": "nvidia/nemotron-3-embed-1b",
         "input": [text],
-        "input_type": input_type,
+        "input_type": "query",
     }
 
     response = requests.post(
         EMBEDDING_URL,
         headers=HEADERS,
-        json=data
+        json=data,
     )
 
     response.raise_for_status()
@@ -32,54 +31,43 @@ def get_embedding(text, input_type):
     return response.json()["data"][0]["embedding"]
 
 
-def cosine_similarity(a, b):
-    dot_product = sum(x * y for x, y in zip(a, b))
+# ChromaDB'ye bağlan
+chroma_client = chromadb.PersistentClient(
+    path="./vector_db"
+)
 
-    length_a = math.sqrt(sum(x * x for x in a))
-    length_b = math.sqrt(sum(y * y for y in b))
-
-    return dot_product / (length_a * length_b)
-
-
-with open("knowledge/bilgi.txt", "r", encoding="utf-8") as file:
-    text = file.read()
+collection = chroma_client.get_collection(
+    name="maoai_knowledge"
+)
 
 
-chunks = create_chunks(text)
-
+# Kullanıcıdan soru al
 soru = input("Sen: ")
 
-soru_vector = get_embedding(soru, "query")
+
+# Sadece soruyu embedding'e çevir
+soru_vector = get_query_embedding(soru)
 
 
-best_chunk = None
-best_score = -1
+# ChromaDB'de en yakın chunk'ı ara
+results = collection.query(
+    query_embeddings=[soru_vector],
+    n_results=1,
+)
 
 
-for chunk in chunks:
-
-    chunk_vector = get_embedding(chunk, "passage")
-
-    score = cosine_similarity(
-        soru_vector,
-        chunk_vector
-    )
-
-    print(f"\nScore: {score:.4f}")
-    print(f"Chunk: {chunk}")
-
-    if score > best_score:
-        best_score = score
-        best_chunk = chunk
+best_chunk = results["documents"][0][0]
+distance = results["distances"][0][0]
 
 
 print("\n----------------------")
-print("EN ALAKALI CHUNK:")
+print("BULUNAN KAYNAK:")
 print(best_chunk)
-print("Similarity:", best_score)
+print("Distance:", distance)
 print("----------------------")
 
 
+# Bulunan kaynağı LLM'e gönder
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key=os.environ["NVIDIA_API_KEY"],
