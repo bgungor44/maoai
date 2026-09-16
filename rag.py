@@ -13,6 +13,8 @@ EMBEDDING_URL = "https://integrate.api.nvidia.com/v1/embeddings"
 VECTOR_DB_PATH = "./vector_db"
 COLLECTION_NAME = "maoai_knowledge"
 TOP_K = 5
+DOCUMENT_SAMPLE_SIZE = 24
+DOCUMENT_BATCH_SIZE = 6
 
 HEADERS = {
     "Authorization": f"Bearer {os.environ['NVIDIA_API_KEY']}",
@@ -89,9 +91,7 @@ def build_context(matches):
 
     for index, (chunk, distance, metadata) in enumerate(matches, start=1):
         label = source_label(metadata)
-        parts.append(
-            f"[KAYNAK {index} | {label}]\n{chunk}"
-        )
+        parts.append(f"[KAYNAK {index} | {label}]\n{chunk}")
 
     return "\n\n".join(parts)
 
@@ -110,7 +110,161 @@ def print_matches(matches):
         print(chunk)
 
 
+def is_document_wide_question(question):
+    # Belgenin tamamı/geneli hakkında cevap gerektiren ifadeleri yakala.
+    # Noktasal sorular eski Top-K RAG yolunda kalmaya devam eder.
+    text = question.casefold()
+    markers = (
+        "pdf'yi özetle", "pdfyi özetle", "pdf'i özetle", "pdfi özetle",
+        "pdf genel olarak", "pdf'de genel olarak", "pdfde genel olarak",
+        "belgeyi özetle", "belge genel olarak", "belgede genel olarak",
+        "kitabı özetle", "kitap genel olarak", "kitapta genel olarak",
+        "dokümanı özetle", "dokumanı özetle", "doküman genel olarak",
+        "bu pdf", "bu belge", "bu kitap", "bu doküman", "bu dokuman",
+        "genel bir özet", "genel özet",
+    )
+    return any(marker in text for marker in markers)
+
+
+def get_document_samples(collection):
+    # ChromaDB'deki tüm chunk metadata ve metinlerini al.
+    # Sonra her kaynak dosyayı baştan sona temsil edecek şekilde eşit aralıklı
+    # örnekler seç. Böylece sadece embedding'in en yakın 5 sonucuna bakmayız.
+    data = collection.get(include=["documents", "metadatas"])
+    documents = data.get("documents", [])
+    metadatas = data.get("metadatas", [])
+
+    by_source = {}
+    for document, metadata in zip(documents, metadatas):
+        source = metadata.get("source", "bilinmeyen kaynak")
+        by_source.setdefault(source, []).append((document, metadata))
+
+    samples = []
+
+    for source, items in by_source.items():
+        # PDF'lerde sayfa sırasına, diğer kaynaklarda chunk sırasına göre diz.
+        items.sort(
+            key=lambda item: (
+                item[1].get("page", 0),
+                item[1].get("chunk_index", 0),
+            )
+        )
+
+        sample_count = min(DOCUMENT_SAMPLE_SIZE, len(items))
+        if sample_count == 1:
+            selected_indexes = [0]
+        else:
+            selected_indexes = [
+                round(i * (len(items) - 1) / (sample_count - 1))
+                for i in range(sample_count)
+            ]
+
+        for index in selected_indexes:
+            document, metadata = items[index]
+            samples.append((document, metadata))
+
+    return samples
+
+
+def summarize_sample_batch(client, question, batch):
+    # Belgenin küçük bir bölümünü analiz edip yalnızca soruyla ilgili notları çıkar.
+    parts = []
+    for chunk, metadata in batch:
+        parts.append(f"[{source_label(metadata)}]\n{chunk}")
+
+    context = "\n\n".join(parts)
+
+    response = client.chat.completions.create(
+        model="openai/gpt-oss-20b",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+Sen belge analizi yapan bir ara aşamasın.
+Yalnızca verilen METİN PARÇALARI'nı kullan.
+Kullanıcının isteği açısından önemli olan ana fikirleri kısa notlar halinde çıkar.
+Metinde olmayan bilgi ekleme.
+Her notta mümkünse dosya ve sayfa bilgisini koru.
+İlgili bilgi yoksa "İlgili bilgi yok." yaz.
+Cevabı Türkçe ver.
+""",
+            },
+            {
+                "role": "user",
+                "content": f"""
+KULLANICI İSTEĞİ:
+{question}
+
+METİN PARÇALARI:
+{context}
+""",
+            },
+        ],
+        temperature=0,
+    )
+
+    return response.choices[0].message.content.strip()
+
+
+def answer_document_wide_question(client, collection, question):
+    # Map-reduce benzeri belge analizi:
+    # 1) Belgenin farklı noktalarından örnek chunk'lar al.
+    # 2) Küçük grupları ayrı ayrı analiz et.
+    # 3) Ara notları tek bir nihai cevapta birleştir.
+    samples = get_document_samples(collection)
+
+    if not samples:
+        return "Bilmiyorum."
+
+    print(f"\n[BELGE ANALİZİ] {len(samples)} temsilci chunk inceleniyor...")
+
+    notes = []
+    for start in range(0, len(samples), DOCUMENT_BATCH_SIZE):
+        batch = samples[start:start + DOCUMENT_BATCH_SIZE]
+        note = summarize_sample_batch(client, question, batch)
+        notes.append(note)
+        print(f"Belge analizi: {min(start + len(batch), len(samples))}/{len(samples)}")
+
+    combined_notes = "\n\n--- ARA NOT ---\n\n".join(notes)
+
+    response = client.chat.completions.create(
+        model="openai/gpt-oss-20b",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+Sen MAOAI isimli kaynak-temelli bir bilgi asistanısın.
+Aşağıdaki ARA NOTLAR, belgenin farklı bölümlerinden çıkarılmıştır.
+Yalnızca bu notlarda desteklenen bilgileri kullan.
+Belgenin tamamını eksiksiz okuduğunu veya her sayfayı doğruladığını iddia etme.
+Notlarda yeterli bilgi yoksa "Bilmiyorum." de.
+Çelişkili notlar varsa çelişkiyi açıkça belirt.
+Dosya/sayfa bilgisi bulunan önemli iddialarda bu bilgiyi koru.
+Cevabı Türkçe ver.
+""",
+            },
+            {
+                "role": "user",
+                "content": f"""
+KULLANICI İSTEĞİ:
+{question}
+
+ARA NOTLAR:
+{combined_notes}
+""",
+            },
+        ],
+        temperature=0,
+    )
+
+    return response.choices[0].message.content.strip()
+
+
 def answer_question(client, collection, question):
+    # Belge-geneli soruları normal Top-5 retrieval yerine ayrı analiz yoluna gönder.
+    if is_document_wide_question(question):
+        return answer_document_wide_question(client, collection, question)
+
     matches = retrieve(collection, question)
 
     if not matches:
