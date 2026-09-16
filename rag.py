@@ -49,43 +49,53 @@ soru = input("Sen: ")
 soru_vector = get_query_embedding(soru)
 
 
-# ChromaDB'de en yakın chunk'ı ara
+# ChromaDB'de soruya en yakın 3 chunk'ı ara
 results = collection.query(
     query_embeddings=[soru_vector],
-    n_results=1,
+    n_results=3,
 )
 
 
-best_chunk = results["documents"][0][0]
-distance = results["distances"][0][0]
+# ChromaDB'nin bulduğu chunk'ları ve distance değerlerini al
+chunks = results["documents"][0]
+distances = results["distances"][0]
 
 
-print("\n----------------------")
-print("BULUNAN KAYNAK:")
-print(best_chunk)
-print("Distance:", distance)
-print("----------------------")
+# Bulunan 3 kaynağı terminalde göster
+for i, (chunk, distance) in enumerate(
+    zip(chunks, distances),
+    start=1
+):
+    print(f"\n--- KAYNAK {i} ---")
+    print(f"Distance: {distance}")
+    print(chunk)
 
 
-# Bulunan kaynağı LLM'e gönder
+# Bulunan 3 chunk'ı tek bir metin haline getir
+# Böylece LLM sadece tek chunk yerine 3 kaynağı birden görecek
+context = "\n\n".join(chunks)
+
+
+# Bulunan kaynakları Cerebras üzerindeki LLM'e gönder
+# NVIDIA şimdilik sadece embedding üretmek için kullanılıyor
 client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key=os.environ["NVIDIA_API_KEY"],
+    base_url="https://api.cerebras.ai/v1",
+    api_key=os.environ["CEREBRAS_API_KEY"],
 )
 
 
 response = client.chat.completions.create(
-    model="nvidia/nemotron-3.5-lightning-30b-a3b",
+    model="llama3.1-8b",
     messages=[
         {
             "role": "system",
             "content": """
 Sen MAOAI isimli bir bilgi asistanısın.
 
-Sadece sana verilen KAYNAK içerisindeki
+Sadece sana verilen KAYNAKLAR içerisindeki
 bilgileri kullan.
 
-Kaynak soruyu cevaplamak için yeterli değilse
+Kaynaklar soruyu cevaplamak için yeterli değilse
 "Bilmiyorum." de.
 
 Kendi bilgilerini kullanma.
@@ -95,8 +105,8 @@ Cevabı Türkçe ver.
         {
             "role": "user",
             "content": f"""
-KAYNAK:
-{best_chunk}
+KAYNAKLAR:
+{context}
 
 SORU:
 {soru}
@@ -107,4 +117,5 @@ SORU:
 )
 
 
+# LLM'in oluşturduğu cevabı kullanıcıya göster
 print("\nMAOAI:", response.choices[0].message.content)
