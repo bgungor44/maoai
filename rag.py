@@ -2,8 +2,12 @@ import os
 
 import chromadb
 import requests
+from dotenv import load_dotenv
 from openai import OpenAI
 
+
+# Proje kökündeki .env dosyasındaki API anahtarlarını ortam değişkenlerine yükle.
+load_dotenv()
 
 EMBEDDING_URL = "https://integrate.api.nvidia.com/v1/embeddings"
 VECTOR_DB_PATH = "./vector_db"
