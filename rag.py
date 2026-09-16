@@ -76,16 +76,16 @@ for i, (chunk, distance) in enumerate(
 context = "\n\n".join(chunks)
 
 
-# Bulunan kaynakları Cerebras üzerindeki LLM'e gönder
+# Bulunan kaynakları Groq üzerindeki LLM'e gönder
 # NVIDIA şimdilik sadece embedding üretmek için kullanılıyor
 client = OpenAI(
-    base_url="https://api.cerebras.ai/v1",
-    api_key=os.environ["CEREBRAS_API_KEY"],
+    base_url="https://api.groq.com/openai/v1",
+    api_key=os.environ["GROQ_API_KEY"],
 )
 
 
 response = client.chat.completions.create(
-    model="qwen-3.8-27b",
+    model="openai/gpt-oss-20b",
     messages=[
         {
             "role": "system",
