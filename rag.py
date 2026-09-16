@@ -85,7 +85,7 @@ client = OpenAI(
 
 
 response = client.chat.completions.create(
-    model="llama3.1-8b",
+    model="qwen-3.8-27b",
     messages=[
         {
             "role": "system",
